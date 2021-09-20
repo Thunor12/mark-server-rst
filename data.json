@@ -1,0 +1,50 @@
+{
+  "name": "sc1",
+  "subjects": [
+    {
+      "name": "Math",
+      "exames": [
+        {
+          "name": "Math_1",
+          "mark": 11.3,
+          "weight": 2.0
+        },
+        {
+          "name": "Math_2",
+          "mark": 15.1,
+          "weight": 1.0
+        },
+        {
+          "name": "Math_3",
+          "mark": 16.5,
+          "weight": 1.0
+        }
+      ],
+      "weight": 5.0,
+      "average": 13.55
+    },
+    {
+      "name": "Robo",
+      "exames": [
+        {
+          "name": "Robo_1",
+          "mark": 12.3,
+          "weight": 2.0
+        },
+        {
+          "name": "Robo_2",
+          "mark": 14.1,
+          "weight": 1.0
+        },
+        {
+          "name": "Robo_3",
+          "mark": 13.5,
+          "weight": 1.0
+        }
+      ],
+      "weight": 6.0,
+      "average": 13.05
+    }
+  ],
+  "average": 13.27727272727273
+}

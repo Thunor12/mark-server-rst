@@ -1,145 +1,156 @@
-/bin/bash: ligne 1: q : commande introuvable
 use std::fs::File;
-use std::io::Bytes;
 use std::io::prelude::*;
-use std::io::BufWriter;
-use std::io::BufReader;
-
-use serde::ser::Error;
-use serde_json;
+use std::stream::FromIter;
+use actix_web::middleware::normalize::TrailingSlash;
 use serde;
+use serde_json;
 use serde::Serialize;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Exame {
-    name: String,
-    mark: f64,
-    weight: f64,
+struct Particle {
+    weight: Option<f64>,
+    average: Option<f64>,
+    particles: Vec<Particle>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Subject {
-    name: String,
-    exames: Vec<Exame>,
-    weight: f64,
-    average: f64,
+impl Default for Particle {
+    fn default() -> Self {
+        Particle {
+            weight: Some(1 as f64),
+            average: None,
+            particles: Vec::new(),
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct UE {
-    name: String,
-    subjects: Vec<Subject>,
-    average: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Marks {
-    marks: Vec<UE>,
-    average: f64,
-}
-
-impl Subject {
-
-    fn add_exame(& mut self, exame: Exame) {
-        self.exames.push(exame); 
+impl Particle {
+    fn set_weight(&mut self, v: f64) {
+        self.weight = Some(v);
     }
 
-    fn compute_average(& mut self) {
-        if self.exames.len() == 0 {return;}
+    fn get_weight(& self) -> f64 {
+        match self.weight {
+            Some(w) => w,
+            None => 1 as f64,
+        }
+    }
 
-        self.average = 0 as f64;
-        let mut summed_weights: f64 = 0 as f64;
+    fn get_average(&mut self) -> Result<f64, Box<dyn std::error::Error>> {
+        self.average
+    }
 
-        for exame in self.exames.as_slice() {
-            summed_weights += exame.weight;
-            self.average += exame.mark * exame.weight;
+    fn new(&mut self, particles: Vec<Particle>, weight: f64) -> Self {
+        let mut numerator = 0 as f64;
+        let mut summed_weights  = 0 as f64;
+
+        for particle in particles.as_slice() {
+            numerator += particle.get_average() * particle.get_weight();
+            summed_weights += particle.get_weight();
         }
 
-        self.average = self.average / summed_weights;
-    }
-}
-
-impl UE {
-    fn add_subject(& mut self, subject: Subject) {
-        self.subjects.push(subject);
+        Particle {
+            weight: None,
+            average: Some(numerator / summed_weights),
+            particles: particles,
+        }
     }
 
-    fn compute_average(& mut self) {
-        if self.subjects.len() == 0 {return;}
 
-        self.average = 0 as f64;
-        let mut summed_weights: f64 = 0 as f64;
+    fn update(&mut self) -> Self {
+        let mut numerator = 0 as f64;
+        let mut summed_weights  = 0 as f64;
 
-        for subject in self.subjects.as_mut_slice() {
-            subject.compute_average();
-            summed_weights += subject.weight;
-            self.average += subject.average * subject.weight;
+        for particle in self.particles.as_slice() {
+            particle.update();
+            numerator += particle.get_average() * particle.get_weight();
+            summed_weights += particle.get_weight();
         }
 
-        self.average = self.average / summed_weights;
+        Particle {
+            weight: None,
+            average: Some(numerator / summed_weights),
+            particles: particles,
+        }
     }
 }
 
-impl Marks {
-    fn add_ue(& mut self, ue: UE) {
-        self.marks.push(ue);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExameGroup {
+    name: String,
+    particle: Particle,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UEGroup {
+    name: String,
+    particle: Particle,
+    passed: Option<bool>,
+    requirement: f64,
+}
+
+impl Default for UEGroup {
+   fn default() -> Self {
+        UEGroup {
+            name: "",
+            particle: Particle::empty(),
+            passed: None,
+            requirement: 10 as f64,
+        }
+   }
+}
+
+impl UEGroup {
+    fn determmin_if_passed(&mut self) -> bool {
+        unimplemented!("Determin if the student passed");
+    }
+}
+
+impl FromIterator<ExameGroup> for UEGroup {
+    fn from_iter<I: IntoIterator<Item=ExameGroup>>(iter: I) -> Self {
+        let mut u = Self::empty();
+
+        for exam in iter {
+            u.particle.particles.add(exam.particle);
+        }
+
+        u.particle.update();
+
+        u
+    }
+}
+
+
+trait Transmitable {
+    fn export_tp_path(& self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let mut file = File::create(path)?;
+
+        let data = serde_json::to_string(&self)?;
+        file.write_all(data.as_bytes())?;
+
+        Ok(())
     }
 
-    fn compute_average(& mut self) {
-       if self.marks.len() == 0 {return;}
-       
-       self.average = 0 as f64;
-       let mut summed_weights: f64 = 0 as f64;
-
-       for mark in self.marks.as_mut_slice() {
-           mark.compute_average();
-           summed_weights += 1 as f64;
-           self.average += mark.average;
-       }
-
-       self.average = self.average / summed_weights;
-
+    fn import_from_path(path: &str) -> Result<Self, Self::Error> {
+        let file = File::open(path)?;
+        let data = serde_json::from_reader(file)?;
+        Ok(data)
     }
 }
 
-fn load_db(path: &str) -> Result<Marks, serde_json::Error> {
-    let file = match File::open(path) {
-        Ok(f) => f,
-        Err(e) => panic!("{}", e),
-    };
+impl Transmitable for Particle {}
+impl Transmitable for ExameGroup {}
+impl Transmitable for UEGroup {}
 
-    let marks: Marks = match serde_json::from_reader(file) {
-        Ok(mks) => mks,
-        Err(e) => return Err(e),
-    };
-
-    Ok(marks)
-}
-
-fn save_data(marks: Marks, path: &str) -> Result<(), serde_json::Error> {
-    let mut file = match File::create(path) {
-       Ok(f) => f,
-       Err(e) => panic!("{}", e),
-    };
-
-   let data = match serde_json::to_string(&marks) {
-       Ok(d) => d,
-       Err(e) => return Err(e),
-   };
-
-   match file.write_all(data.as_bytes()) {
-       Ok(())=> (),
-       Err(e) => panic!("{}", e),
-   };
-
-   Ok(())
-}
 
 fn main() { 
     let path: &str = "data.json";
-    let file = match File::open(path) {
-        Ok(f) => f,
-        Err(e) => panic!("{}", e),
-    };
+    gen_example(path);
+
+    let mut marks: UEGroup = UEGroup::import_from_path(path).unwrap();
+    marks.compute_average();
+
+    println!("{:?}", marks);
+    marks.export_db(path).unwrap();
 }

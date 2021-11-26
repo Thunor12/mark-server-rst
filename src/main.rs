@@ -1,4 +1,3 @@
-/bin/bash: ligne 1: q : commande introuvable
 use std::fs::File;
 use std::io::Bytes;
 use std::io::prelude::*;

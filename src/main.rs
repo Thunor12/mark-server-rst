@@ -1,11 +1,14 @@
-use std::fs::File;
-use std::io::prelude::*;
-//use std::stream::FromIter;
-//use actix_web::middleware::normalize::TrailingSlash;
+use std::sync;
+use std::sync::atomic::Ordering::Relaxed;
+
+use actix_web::dev::Factory;
+use actix_web::{error, web, App, HttpResponse, HttpServer, Responder, HttpRequest};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde;
 use serde_json;
 use serde::Serialize;
 use serde::Deserialize;
+use atomic_float::{self, AtomicF64};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Particle {
@@ -63,27 +66,34 @@ impl Particle {
         }
     }
 
-    // TODO Test with rayon
     // TODO add error handeling
     fn update(&mut self) {
-        if(self.particles.len() == 0) {
+        if self.particles.len() == 0 {
             return;
         }
 
-        let mut numerator = 0 as f64;
-        let mut summed_weights  = 0 as f64;
+        let mut numerator = AtomicF64::new(0.0);
+        let mut summed_weights = AtomicF64::new(0.0);
 
-        for particle in self.particles.as_mut_slice() {
-            particle.update();
-            if(particle.average.is_some()) {
-                numerator += particle.get_average().unwrap() * particle.get_weight();
-                summed_weights += particle.get_weight();
-            }
-        }
+        self.particles
+            .as_mut_slice()
+            .into_par_iter()
+            .for_each(|p| {p.update();});
 
-        self.average = Some(numerator / summed_weights);
+        self.particles
+            .as_mut_slice()
+            .into_par_iter()
+            .filter(|p| {p.average.is_some()})
+            .for_each(|particle| {
+                let w = particle.get_weight();
+                numerator.fetch_add(particle.get_average().unwrap() * w, Relaxed);
+                summed_weights.fetch_add(w, Relaxed);
+            });
+
+        self.average = Some(*numerator.get_mut() / *summed_weights.get_mut());
     }
-}
+
+   }
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,72 +136,34 @@ impl UEGroup {
     }
 }
 
-
-trait ParticleContainer {
-    fn get_particle_ref(&mut self) -> &mut Particle;
-
-    fn update_particle(&mut self) {
-        self.get_particle_ref().update();
-    }
+async fn get_particle(req: HttpRequest) -> impl Responder {
+    let name = req.match_info().get("name").unwrap_or("World");
+    format!("Hello {}!", &name)
 }
 
-
-impl FromIterator<ExameGroup> for UEGroup {
-    fn from_iter<I: IntoIterator<Item=ExameGroup>>(iter: I) -> Self {
-        let mut u = Self::default();
-
-        for exam in iter {
-            u.particle.particles.push(exam.particle);
-        }
-
-        u.particle.update();
-
-        u
-    }
+//async fn capture_mark(evt: web::Json<Particle>) -> Result<String> {
+async fn capture_mark(evt: web::Json<Particle>) -> impl Responder {
+    println!("{:?}", evt.average);
+    format!("{:?}", evt.average)
 }
 
-
-// trait Transmitable {
-//     fn export_tp_path(& self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
-//         let mut file = File::create(path)?;
-
-//         let data = serde_json::to_string(&self)?;
-//         file.write_all(data.as_bytes())?;
-
-//         Ok(())
-//     }
-
-//     fn import_from_path(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-//         let file = File::open(path)?;
-//         let data = serde_json::from_reader(file)?;
-//         Ok(data)
-//     }
-// }
-
-// impl Transmitable for Particle {}
-// impl Transmitable for ExameGroup {}
-// impl Transmitable for UEGroup {}
-
-
-fn main() {
-    /*
-    let path: &str = "data.json";
-    gen_example(path);
-
-    let mut marks: UEGroup = UEGroup::import_from_path(path).unwrap();
-    marks.compute_average();
-
-    println!("{:?}", marks);
-    marks.export_db(path).unwrap();
-     */
-    println!("Writting Tests First !!");
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    HttpServer::new(|| {
+        App::new()
+            .route("/particle", web::get().to(get_particle))
+            .route("/particle", web::post().to(capture_mark))
+    })
+    .bind(("127.0.0.1", 8080))?
+    .workers(2)
+    .run()
+    .await
 }
 
 
 #[cfg(test)]
 mod tests {
     use std::vec;
-
     use crate::Particle;
 
     #[test]
@@ -227,6 +199,7 @@ mod tests {
                 Particle::new(2.0, 1.0),
             ]
         );
+        p1.weight = Some(1.0);
 
         let mut p2 = Particle::new(2.0, 4.0);
 
